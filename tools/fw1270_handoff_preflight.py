@@ -33,6 +33,9 @@ HV_SIGNATURES = {
     "exit jump table": (0x62846AF2, "48 8d 05 03 47 00 00 48 63 0c 88 48 01 c1 ff e1"),
     "VMMCALL case": (0x62847175, "49 8b 46 08 80 b8 cb 04 00 00 00 0f 84 97 03 00 00"),
     "nested command dispatch": (0x628476B0, "4c 8b 80 f8 05 00 00 4d 8d 68 fc 49 83 fd 1c"),
+    "out-of-range command fault": (0x62847F62, "b8 01 00 00 00 0f a2 c1 eb 18"),
+    "command 0x17 handler": (0x62847EB9, "4c 89 f7 31 f6 31 d2 e8 cb a1 ff ff"),
+    "guest register write helper": (0x62842090, "55 48 89 e5 48 8b 47 08 48 85 c0"),
 }
 
 
@@ -87,6 +90,16 @@ def check_hv(data: bytes) -> None:
     if rel32(data, case_branch, 2, 6) != 0x6284751D - HV_BASE:
         raise ValueError("VMMCALL case state branch differs")
 
+    # The nested table uses displacements relative to the table base.
+    command_table = 0x6284B3E8
+    for command, expected in ((0x17, 0x62847EB9), (0x18, 0x62847F62)):
+        slot = command_table - HV_BASE + (command - 4) * 4
+        target = command_table + struct.unpack_from("<i", data, slot)[0]
+        if target != expected:
+            raise ValueError(f"command 0x{command:x} target differs: 0x{target:x}")
+    if rel32(data, 0x62847EC0 - HV_BASE, 1, 5) != 0x62842090 - HV_BASE:
+        raise ValueError("command 0x17 guest-register-write call differs")
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -105,6 +118,7 @@ def main() -> int:
     print("PASS kernel: hv_mp_startup_call and smp_rendezvous callback path")
     print("PASS HV: VMCB EXITCODE 0x81 dispatches to PA 0x62847175")
     print("PASS HV: guest RAX=0x17 skips telemetry; VMMCALL case has a state branch")
+    print("PASS HV: command 0x17 reaches guest-register write; invalid commands fault")
     print("LIMIT offline control-flow evidence; no safe redirect or return path established")
     return 0
 
